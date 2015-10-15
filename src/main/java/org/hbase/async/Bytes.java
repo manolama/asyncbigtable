@@ -27,12 +27,13 @@
 package org.hbase.async;
 
 import com.google.protobuf.ByteString;
-import org.jboss.netty.buffer.ChannelBuffer;
-import org.jboss.netty.util.CharsetUtil;
+
+import io.netty.buffer.ByteBuf;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.Charset;
 import java.util.*;
 
 /**
@@ -292,12 +293,12 @@ public final class Bytes {
 
   /** Transforms a string into an UTF-8 encoded byte array.  */
   public static byte[] UTF8(final String s) {
-    return s.getBytes(CharsetUtil.UTF_8);
+    return s.getBytes(Charset.forName("UTF-8"));
   }
 
   /** Transforms a string into an ISO-8859-1 encoded byte array.  */
   public static byte[] ISO88591(final String s) {
-    return s.getBytes(CharsetUtil.ISO_8859_1);
+    return s.getBytes(Charset.forName("ISO88591"));
   }
 
   // ---------------------------- //
@@ -458,7 +459,7 @@ public final class Bytes {
    * @param buf The (possibly {@code null}) buffer to pretty-print.
    * @return The buffer in a pretty-printed string.
    */
-  public static String pretty(final ChannelBuffer buf) {
+  public static String pretty(final ByteBuf buf) {
     if (buf == null) {
       return "null";
     }
@@ -467,9 +468,9 @@ public final class Bytes {
       if (buf.getClass() != ReplayingDecoderBuffer) {
         array = buf.array();
       } else if (RDB_buf != null) {  // Netty 3.5.1 and above.
-        array = ((ChannelBuffer) RDB_buf.invoke(buf)).array();
+        array = ((ByteBuf) RDB_buf.invoke(buf)).array();
       } else {  // Netty 3.5.0 and before.
-        final ChannelBuffer wrapped_buf = (ChannelBuffer) RDB_buffer.get(buf);
+        final ByteBuf wrapped_buf = (ByteBuf) RDB_buffer.get(buf);
         array = wrapped_buf.array();
       }
     } catch (UnsupportedOperationException e) {

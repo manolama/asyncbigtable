@@ -29,27 +29,28 @@ package org.hbase.async;
 import com.google.common.cache.LoadingCache;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
+
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.*;
-import org.apache.hadoop.hbase.client.MultiAction;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.jboss.netty.channel.socket.ClientSocketChannelFactory;
-import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
-import org.jboss.netty.util.HashedWheelTimer;
-import org.jboss.netty.util.Timeout;
-import org.jboss.netty.util.Timer;
-import org.jboss.netty.util.TimerTask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import io.netty.util.HashedWheelTimer;
+import io.netty.util.Timeout;
+import io.netty.util.Timer;
+import io.netty.util.TimerTask;
 
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map.Entry;
 import java.util.NavigableMap;
 import java.util.concurrent.*;
 
@@ -345,6 +346,21 @@ public final class HBaseClient {
       this.executor = executor;
       this.hbaseConfig = HBaseConfiguration.create();
       LOG.info("HBase API: Connecting with config: {}", this.hbaseConfig);
+      
+      hbaseConfig.set("google.bigtable.auth.json.keyfile", "/Users/clarsen/Documents/opentsdb/bigtable/quickstart/key.json");
+      //hbaseConfig.set("google.bigtable.auth.service.account.email", "1092944806598-vhvst29uokens2spkld8em6a2tl1sfmd@developer.gserviceaccount.com");
+      //hbaseConfig.set("google.bigtable.endpoint.host", "bigtable.googleapis.com");
+      hbaseConfig.set("google.bigtable.project.id", "calcium-post-108621");
+      hbaseConfig.set("google.bigtable.cluster.name", "opentsdb");
+      hbaseConfig.set("google.bigtable.zone.name", "us-central1-c");
+      hbaseConfig.set("hbase.client.connection.impl", "com.google.cloud.bigtable.hbase1_0.BigtableConnection");
+      //hbaseConfig.set("google.bigtable.auth.service", "");
+      hbaseConfig.set("google.bigtable.auth.service.account.enable", "true");
+      
+      final Iterator<Entry<String, String>> it = hbaseConfig.iterator();
+      while (it.hasNext()) {
+        LOG.info("--- " + it.next());
+      }
       try {
           this.hbaseConnection = ConnectionFactory.createConnection(hbaseConfig);
       } catch (IOException e) {
