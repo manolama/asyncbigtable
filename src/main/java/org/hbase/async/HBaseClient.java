@@ -347,15 +347,12 @@ public final class HBaseClient {
       this.hbaseConfig = HBaseConfiguration.create();
       LOG.info("HBase API: Connecting with config: {}", this.hbaseConfig);
       
-      hbaseConfig.set("google.bigtable.auth.json.keyfile", "/Users/clarsen/Documents/opentsdb/bigtable/quickstart/key.json");
-      //hbaseConfig.set("google.bigtable.auth.service.account.email", "1092944806598-vhvst29uokens2spkld8em6a2tl1sfmd@developer.gserviceaccount.com");
-      //hbaseConfig.set("google.bigtable.endpoint.host", "bigtable.googleapis.com");
-      hbaseConfig.set("google.bigtable.project.id", "calcium-post-108621");
-      hbaseConfig.set("google.bigtable.cluster.name", "opentsdb");
-      hbaseConfig.set("google.bigtable.zone.name", "us-central1-c");
-      hbaseConfig.set("hbase.client.connection.impl", "com.google.cloud.bigtable.hbase1_0.BigtableConnection");
-      //hbaseConfig.set("google.bigtable.auth.service", "");
-      hbaseConfig.set("google.bigtable.auth.service.account.enable", "true");
+//      hbaseConfig.set("google.bigtable.auth.json.keyfile", "/Users/clarsen/Documents/opentsdb/bigtable/quickstart/key.json");
+//      hbaseConfig.set("google.bigtable.project.id", "calcium-post-108621");
+//      hbaseConfig.set("google.bigtable.cluster.name", "opentsdb");
+//      hbaseConfig.set("google.bigtable.zone.name", "us-central1-c");
+//      hbaseConfig.set("hbase.client.connection.impl", "com.google.cloud.bigtable.hbase1_0.BigtableConnection");
+//      hbaseConfig.set("google.bigtable.auth.service.account.enable", "true");
       
       final Iterator<Entry<String, String>> it = hbaseConfig.iterator();
       while (it.hasNext()) {
