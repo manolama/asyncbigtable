@@ -26,7 +26,7 @@
  */
 package org.hbase.async;
 
-import org.jboss.netty.buffer.ChannelBuffer;
+import org.apache.hadoop.hbase.filter.Filter;
 
 /**
  * Abstract base class for {@link org.hbase.async.Scanner} filters.
@@ -56,29 +56,6 @@ public abstract class ScanFilter {
    * The contents of the array returned MUST NOT be modified.
    */
   abstract byte[] name();
-
-  /**
-   * Serializes the byte representation to a protobuf in a byte array.
-   * <p>
-   * This method is only used with HBase 0.95 and newer.
-   */
-  abstract byte[] serialize();
-
-  /**
-   * Serializes the byte representation to the RPC channel buffer.
-   * <p>
-   * This method is only used with HBase 0.94 and before.
-   * @param buf The RPC channel buffer to which the byte array is serialized
-   */
-  abstract void serializeOld(ChannelBuffer buf);
-
-  /**
-   * returns the number of bytes that it will write to the RPC channel buffer when {@code serialize}
-   * is called. This method helps predict the initial size of the byte array
-   * <p>
-   * This method is only used with HBase 0.94 and before.
-   * @return A strictly positive integer
-   */
-  abstract int predictSerializedSize();
-
+  
+  abstract Filter getFilter();
 }

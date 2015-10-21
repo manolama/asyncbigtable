@@ -26,6 +26,11 @@
  */
 package org.hbase.async;
 
+import java.util.ArrayList;
+
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.client.Result;
+
 /**
  * Reads something from BigTable.
  *
@@ -299,4 +304,21 @@ public final class GetRequest extends HBaseRpc
     return super.toStringWithQualifiers(klass, family, qualifiers);
   }
 
+  /**
+   * Converts a protobuf result into a list of {@link KeyValue}.
+   * @param res The protobuf'ed results from which to extract the KVs.
+   * @param buf The buffer from which the protobuf was read.
+   * @param cell_size The number of bytes of the cell block that follows,
+   * in the buffer.
+   */
+  static ArrayList<KeyValue> convertResult(final Result result) {
+    final ArrayList<KeyValue> columns = new ArrayList<KeyValue>(result.size());
+    KeyValue last_kv = null;
+    for (final Cell cell : result.rawCells()) {
+      final KeyValue kv = KeyValue.fromCell(cell, last_kv);
+      columns.add(kv);
+      last_kv = kv;
+    }
+    return columns;
+  }
 }

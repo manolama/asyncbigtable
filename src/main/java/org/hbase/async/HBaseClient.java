@@ -36,6 +36,7 @@ import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Admin;
 import org.apache.hadoop.hbase.client.Append;
 import org.apache.hadoop.hbase.client.BufferedMutator;
+import org.apache.hadoop.hbase.client.BufferedMutator.ExceptionListener;
 import org.apache.hadoop.hbase.client.BufferedMutatorParams;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
@@ -154,7 +155,7 @@ public final class HBaseClient {
   private final Counter num_scanners_opened = new Counter();
 
   /** Number of calls to {@link #scanNextRows}.  */
-  private final Counter num_scans = new Counter();
+  static final Counter num_scans = new Counter();
 
   /** Number calls to {@link #put}.  */
   private final Counter num_puts = new Counter();
@@ -752,7 +753,13 @@ public final class HBaseClient {
    * @return A new scanner for this table.
    */
   public Scanner newScanner(final byte[] table) {
-    return new Scanner(this, table);
+    try {
+      return new Scanner(this, table);
+    } catch (IllegalArgumentException e) {
+      throw e;
+    } catch (IOException e) {
+      throw new RuntimeException("Unexpected exception", e);
+    }
   }
 
   /**
@@ -762,75 +769,15 @@ public final class HBaseClient {
    * @return A new scanner for this table.
    */
   public Scanner newScanner(final String table) {
-    return new Scanner(this, table.getBytes());
-  }
-
-  /**
-   * Package-private access point for {@link Scanner}s to open themselves.
-   * @param scanner The scanner to open.
-   * @return A deferred scanner ID (long) if BigTable 0.94 and before, or a
-   * deferred {@link Scanner.Response} if BigTable 0.95 and up.
-   */
-  Deferred<Object> openScanner(final Scanner scanner) {
-    num_scanners_opened.increment();
-
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("BigTable API: Scanning table with {}", scanner.toString());
-    }
-    Table table = null;
     try {
-      table = hbase_connection.getTable(TableName.valueOf(scanner.table()));
-      ResultScanner result = table.getScanner(scanner.getHbaseScan());
-      scanner.setResultScanner(result);
-      scanner.setHbaseTable(table);
-
-      return Deferred.fromResult(new Object());
+      return new Scanner(this, table.getBytes());
+    } catch (IllegalArgumentException e) {
+      throw e;
     } catch (IOException e) {
-      if (table != null) {
-        try {
-          table.close();
-        } catch (Exception e1) {}
-      }
-
-      return Deferred.fromError(e);
+      throw new RuntimeException("Unexpected exception", e);
     }
   }
-
-  /**
-   * Package-private access point for {@link Scanner}s to close themselves.
-   * @param scanner The scanner to close.
-   * @return A deferred object that indicates the completion of the request.
-   * The {@link Object} has not special meaning and can be {@code null}.
-   */
-  Deferred<Object> closeScanner(final Scanner scanner) {
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("BigTable API: Closing scanner {}", scanner);
-    }
-    try {
-      if (scanner.getResultScanner() != null) {
-        scanner.getResultScanner().close();
-      } else {
-        LOG.warn("Cannot close " + scanner + " properly, no result scanner open");
-      }
-      return Deferred.fromResult(null);
-    } catch (Exception e) {
-      return Deferred.fromError(e);
-    } finally {
-      scanner.setResultScanner(null);
-      try {
-        if (scanner.getHbaseTable() != null) {
-          scanner.getHbaseTable().close();
-        } else {
-          LOG.warn("Cannot close " + scanner + " properly, no table open");
-        }
-      } catch (Exception e) {
-        return Deferred.fromError(e);
-      } finally {
-        scanner.setHbaseTable(null);
-      }
-    }
-  }
-
+  
   /**
    * Atomically and durably increments a value in BigTable.
    * <p>
@@ -1305,36 +1252,57 @@ public final class HBaseClient {
     return Deferred.fromResult(Collections.<RegionLocation>emptyList());
   }
   
+  Table getHBaseTable(final byte[] table) throws IllegalArgumentException, IOException {
+    return hbase_connection.getTable(TableName.valueOf(table));
+  }
+  
+  ExecutorService getExecutor() {
+    return executor;
+  }
+  
   // --------------- //
   // Little helpers. //
   // --------------- //
+  
+  static class BMListener implements ExceptionListener {
+    @Override
+    public void onException(RetriesExhaustedWithDetailsException exception,
+        BufferedMutator mutator) throws RetriesExhaustedWithDetailsException {
+      for (int i = 0; i < exception.getNumExceptions(); i++) {
+        // TODO - these need to be tied to their put requests and
+        // return the exception
+        LOG.error("Failed to sent put: " + exception.getRow(i));
+      }
+    }
+    
+    @Override
+    public String toString() {
+      return "BufferedMutator listener";
+    }
+  }
+  private static final BMListener mutator_cb = new BMListener();
   
   private BufferedMutator getBufferedMutator(TableName table) throws IOException {
     BufferedMutator mutator = mutators.get(table);
 
     if (mutator == null) {
       synchronized (mutators) {
-
-      BufferedMutator.ExceptionListener listener =
-              new BufferedMutator.ExceptionListener() {
-                  @Override
-                  public void onException(RetriesExhaustedWithDetailsException e,
-                                          BufferedMutator mutator) {
-                      for (int i = 0; i < e.getNumExceptions(); i++) {
-                        // TODO - these need to be tied to their put requests and
-                        // return the exception
-                          LOG.error("Failed to sent put: " + e.getRow(i));
-                      }
-                  }
-              };
-        BufferedMutatorParams params = new BufferedMutatorParams(table)
-                .listener(listener);
-        if (executor != null) {
-            params = params.pool(executor);
+        mutator = mutators.get(table);
+        if (mutator != null) {
+          return mutator;
         }
+
+        final BufferedMutatorParams params = new BufferedMutatorParams(table)
+                .listener(mutator_cb);
+//        if (executor != null) {
+//          params = params.pool(executor);
+//        }
 
         mutator = hbase_connection.getBufferedMutator(params);
         mutators.put(table, mutator);
+        //if (LOG.isDebugEnabled()) {
+          LOG.info("New buffered mutator created for table " + table.toString());
+        //}
       }
     }
 

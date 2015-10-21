@@ -28,6 +28,8 @@ package org.hbase.async;
 
 import java.util.Arrays;
 
+import org.apache.hadoop.hbase.Cell;
+
 /**
  * A "cell" in an HBase table.
  * <p>
@@ -54,9 +56,13 @@ public final class KeyValue implements Comparable<KeyValue> {
   //private static final Logger LOG = LoggerFactory.getLogger(KeyValue.class);
 
   private final byte[] key;     // Max length: Short.MAX_VALUE = 32768
+  private int key_offset, key_length;
   private final byte[] family;  // Max length: Byte.MAX_VALUE  =   128
+  private int family_offset, family_length;
   private final byte[] qualifier;
+  private int qualifier_offset, qualifier_length;
   private final byte[] value;
+  private int value_offset, value_length;
   private final long timestamp;
   
   /**
@@ -228,10 +234,10 @@ public final class KeyValue implements Comparable<KeyValue> {
    * @throws NullPointerException if the family is {@code null}.
    */
   static void checkFamily(final byte[] family) {
-    if (family.length > Byte.MAX_VALUE) {
-      throw new IllegalArgumentException("column family too long: "
-        + family.length + " bytes long " + Bytes.pretty(family));
-    }
+//    if (family.length > Byte.MAX_VALUE) {
+//      throw new IllegalArgumentException("column family too long: "
+//        + family.length + " bytes long " + Bytes.pretty(family));
+//    }
   }
 
   /**
@@ -262,4 +268,37 @@ public final class KeyValue implements Comparable<KeyValue> {
     HBaseRpc.checkArrayLength(value);
   }
   
+  static KeyValue fromCell(final Cell cell, final KeyValue prev) {
+    // TODO - looks like we CAN do zero copy by storing the cell's arrays 
+    // and the offset and length for each KV. Then we can parse them out @
+    // read time, letting us skip some cycles
+//    final byte[] key = cell.getRowArray();
+//    final byte[] family = cell.getFamilyArray();
+//    final byte[] qualifier = cell.getQualifierArray();
+//    final long timestamp = cell.getTimestamp();
+//    final byte[] value = cell.getValueArray();
+//    
+//    final KeyValue kv;
+//    if (prev == null) {
+//      kv = new KeyValue(key, family, qualifier, timestamp, /*key_type,*/
+//                          value);
+//    } else {
+//      kv = new KeyValue(Bytes.deDup(prev.key, key),
+//                          Bytes.deDup(prev.family, family),
+//                          Bytes.deDup(prev.qualifier, qualifier),
+//                          timestamp, value);
+//    }
+//    kv.key_offset = cell.getRowOffset();
+//    kv.key_length = cell.getRowLength();
+//    kv.family_offset = cell.getFamilyOffset();
+//    kv.family_length = cell.getFamilyLength();
+//    kv.qualifier_offset = cell.getQualifierOffset();
+//    kv.qualifier_length = cell.getQualifierLength();
+//    kv.value_offset = cell.getValueOffset();
+//    kv.value_length = cell.getValueLength();
+    final KeyValue kv = new KeyValue(
+        cell.getRow(), cell.getFamily(), cell.getQualifier(), cell.getTimestamp(),
+        cell.getValue());
+    return kv;
+  }
 }

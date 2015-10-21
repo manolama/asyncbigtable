@@ -28,6 +28,7 @@ package org.hbase.async;
 
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
+
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
@@ -41,7 +42,9 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.NavigableMap;
+import java.util.concurrent.ExecutorService;
 
 import static org.hbase.async.HBaseClient.EMPTY_ARRAY;
 
@@ -81,11 +84,11 @@ import static org.hbase.async.HBaseClient.EMPTY_ARRAY;
  * <h1>A note on passing {@code String}s in argument</h1>
  * All strings are assumed to use the platform's default charset.
  */
-public final class Scanner {
+public final class Scanner implements Runnable {
   private static final Logger LOG = LoggerFactory.getLogger(Scanner.class);
 
   /** HBase API scan instance */
-  private final Scan hbase_scan;
+  private Scan hbase_scan;
 
   /**
    * HBase API ResultScanner. After the scan is submitted is must not be null.
@@ -93,7 +96,15 @@ public final class Scanner {
   private ResultScanner result_scanner;
 
   /** The HBase table object we're working on */
-  private Table hbase_client_table;
+  private final Table hbase_client_table;
+  
+  private final HBaseClient client;
+  
+  private final ExecutorService executor; // do the dew
+  
+  private Iterator<Result> iterator;
+  
+  private Deferred<ArrayList<ArrayList<KeyValue>>> deferred;
 
   /**
    * The default maximum number of {@link KeyValue}s the server is allowed
@@ -114,7 +125,6 @@ public final class Scanner {
    */
   public static final int DEFAULT_MAX_NUM_ROWS = 128;
 
-  private final HBaseClient client;
   private final byte[] table;
 
   /**
@@ -189,13 +199,16 @@ public final class Scanner {
    * Constructor.
    * <strong>This byte array will NOT be copied.</strong>
    * @param table The non-empty name of the table to use.
+   * @throws IOException 
+   * @throws IllegalArgumentException 
    */
-  public Scanner(final HBaseClient client, final byte[] table) {
+  public Scanner(final HBaseClient client, final byte[] table) 
+      throws IllegalArgumentException, IOException {
     KeyValue.checkTable(table);
     this.client = client;
+    this.hbase_client_table = client.getHBaseTable(table);
+    this.executor = client.getExecutor();
     this.table = table;
-
-    hbase_scan = new Scan();
   }
 
   /**
@@ -217,8 +230,6 @@ public final class Scanner {
     KeyValue.checkKey(start_key);
     checkScanningNotStarted();
     this.start_key = start_key;
-
-    hbase_scan.setStartRow(start_key);
   }
 
   /**
@@ -242,8 +253,6 @@ public final class Scanner {
     KeyValue.checkKey(stop_key);
     checkScanningNotStarted();
     this.stop_key = stop_key;
-
-    hbase_scan.setStopRow(stop_key);
   }
 
   /**
@@ -265,8 +274,6 @@ public final class Scanner {
     KeyValue.checkFamily(family);
     checkScanningNotStarted();
     families = new byte[][] { family };
-
-    hbase_scan.addFamily(family);
   }
 
   /** Specifies a particular column family to scan.  */
@@ -298,15 +305,6 @@ public final class Scanner {
     }
     this.families = families;
     this.qualifiers = qualifiers;
-
-    for (int i = 0; i < families.length; i++) {
-      KeyValue.checkFamily(families[i]);
-      if (qualifiers != null && qualifiers[i] != null) {
-          for (byte[] qualifier : qualifiers[i]) {
-            hbase_scan.addColumn(families[i], qualifier);
-          }
-      }
-    }
   }
 
   /**
@@ -319,8 +317,6 @@ public final class Scanner {
       this.families[i] = families[i].getBytes();
       KeyValue.checkFamily(this.families[i]);
       qualifiers[i] = null;
-
-      hbase_scan.addFamily(this.families[i]);
     }
   }
 
@@ -337,9 +333,6 @@ public final class Scanner {
     KeyValue.checkQualifier(qualifier);
     checkScanningNotStarted();
     this.qualifiers = new byte[][][] { { qualifier } };
-
-    if (families.length > 0)
-      hbase_scan.addColumn(families[0], qualifier);
   }
 
   /** Specifies a particular column qualifier to scan.  */
@@ -386,7 +379,6 @@ public final class Scanner {
    */
   public void clearFilter() {
     filter = null;
-    hbase_scan.setFilter(null);
   }
 
   /**
@@ -398,8 +390,7 @@ public final class Scanner {
    * @param regexp The regular expression with which to filter the row keys.
    */
   public void setKeyRegexp(final String regexp) {
-    RegexStringComparator comparator = new RegexStringComparator(regexp);
-    hbase_scan.setFilter(new RowFilter(CompareFilter.CompareOp.EQUAL, comparator));
+    filter = new KeyRegexpFilter(regexp);
   }
 
   /**
@@ -415,9 +406,7 @@ public final class Scanner {
    * scanner.
    */
   public void setKeyRegexp(final String regexp, final Charset charset) {
-    RegexStringComparator comparator = new RegexStringComparator(regexp);
-    comparator.setCharset(charset);
-    hbase_scan.setFilter(new RowFilter(CompareFilter.CompareOp.EQUAL, comparator));
+    filter = new KeyRegexpFilter(regexp, charset);
   }
 
   /**
@@ -437,7 +426,6 @@ public final class Scanner {
   public void setServerBlockCache(final boolean populate_blockcache) {
     checkScanningNotStarted();
     this.populate_blockcache = populate_blockcache;
-    hbase_scan.setCacheBlocks(populate_blockcache);
   }
 
   /**
@@ -503,7 +491,6 @@ public final class Scanner {
     }
     checkScanningNotStarted();
     this.max_num_kvs = max_num_kvs;
-    hbase_scan.setBatch(max_num_kvs);
   }
 
   /**
@@ -531,8 +518,6 @@ public final class Scanner {
     }
     checkScanningNotStarted();
     this.versions = versions;
-    
-    hbase_scan.setMaxVersions(versions);
   }
 
   /**
@@ -562,8 +547,6 @@ public final class Scanner {
     }
     checkScanningNotStarted();
     this.max_num_bytes = max_num_bytes;
-
-    hbase_scan.setMaxResultSize(max_num_bytes);
   }
 
   /**
@@ -595,12 +578,6 @@ public final class Scanner {
     }
     checkScanningNotStarted();
     min_timestamp = timestamp;
-
-    try {
-      hbase_scan.setTimeRange(getMinTimestamp(), getMaxTimestamp());
-    } catch (IOException e) {
-      throw new IllegalArgumentException("Invalid timestamp: " + timestamp, e);
-    }
   }
 
   /**
@@ -632,12 +609,6 @@ public final class Scanner {
     }
     checkScanningNotStarted();
     max_timestamp = timestamp;
-
-    try {
-      hbase_scan.setTimeRange(getMinTimestamp(), getMaxTimestamp());
-    } catch (IOException e) {
-      throw new IllegalArgumentException("Invalid timestamp: " + timestamp, e);
-    }
   }
 
   /**
@@ -674,39 +645,13 @@ public final class Scanner {
     // We now have the guarantee that max_timestamp >= 0, no need to check it.
     this.min_timestamp = min_timestamp;
     this.max_timestamp = max_timestamp;
-
-    try {
-      hbase_scan.setTimeRange(getMinTimestamp(), getMaxTimestamp());
-    } catch (IOException e) {
-      throw new IllegalArgumentException("Invalid time range", e);
-    }
   }
   
-  /** @return the HTable scan object */
-  Scan getHbaseScan() {
-    return hbase_scan;
-  }
-
-  /** @return the scanner results to work with */
-  ResultScanner getResultScanner() {
-    return result_scanner;
-  }
-
   /** @param result_scanner The scanner result object */
   void setResultScanner(final ResultScanner result_scanner) {
     this.result_scanner = result_scanner;
   }
-
-  /** @return the HTable client */
-  Table getHbaseTable() {
-    return hbase_client_table;
-  }
-
-  /** @param table The HTable client object */
-  public void setHbaseTable(final Table table) {
-    this.hbase_client_table = table;
-  }
-
+  
   /**
    * Scans a number of rows.  Calling this method is equivalent to:
    * <pre>
@@ -743,49 +688,12 @@ public final class Scanner {
    * @see #setMaxNumKeyValues
    */
   public Deferred<ArrayList<ArrayList<KeyValue>>> nextRows() {
-    try {
-      if (result_scanner == null) {
-        client.openScanner(this);
-      }
-
-      Result[] results = result_scanner.next(max_num_rows);
-
-      if (results == null || results.length == 0) {
-        client.closeScanner(this);
-        return Deferred.fromResult(null);
-      }
-
-      ArrayList<ArrayList<KeyValue>> resultList = new ArrayList<ArrayList<KeyValue>>();
-
-      for (Result result : results) {
-        ArrayList<KeyValue> keyValueList = new ArrayList<KeyValue>(result.size());
-
-        if (!result.isEmpty()) {
-          for (NavigableMap.Entry<byte[], NavigableMap<
-              byte[], NavigableMap<Long, byte[]>>> familyEntry : 
-                result.getMap().entrySet()) {
-            byte[] family = familyEntry.getKey();
-            for (NavigableMap.Entry<byte[], NavigableMap<Long, byte[]>> 
-              qualifierEntry : familyEntry.getValue().entrySet()) {
-                byte[] qualifier = qualifierEntry.getKey();
-                long ts = qualifierEntry.getValue().firstKey();
-                byte[] value = qualifierEntry.getValue().get(ts);
-
-                KeyValue kv = new KeyValue(result.getRow(), family,
-                        qualifier, ts, value);
-                keyValueList.add(kv);
-            }
-          }
-        }
-
-        resultList.add(keyValueList);
-      }
-
-      return Deferred.fromResult(resultList);
-    } catch (IOException e) {
-      invalidate();
-      return Deferred.fromError(e);
-    }
+    HBaseClient.num_scans.increment();
+    deferred = new Deferred<ArrayList<ArrayList<KeyValue>>>();
+    // don't tie up the BigTable threads processing scanner responses, handle
+    // that on our own.
+    executor.execute(this);
+    return deferred;
   }
   
   /**
@@ -797,28 +705,30 @@ public final class Scanner {
    * The {@link Object} has not special meaning and can be {@code null}.
    */
   public Deferred<Object> close() {
-    if (result_scanner == null) {
-      return Deferred.fromResult(null);
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("BigTable API: Closing scanner {}", this);
     }
-
-    return client.closeScanner(this).addBoth(closedCallback());
-  }
-
-  /** Callback+Errback invoked when the RegionServer closed our scanner.  */
-  private Callback<Object, Object> closedCallback() {
-    return new Callback<Object, Object>() {
-      public Object call(Object arg) {
-        if (arg instanceof Exception) {
-          final Exception error = (Exception) arg;
-          return error;
+    try {
+      if (result_scanner != null) {
+        result_scanner.close();
+      } else {
+        LOG.warn("Cannot close " + this + " properly, no result scanner open");
+      }
+      return Deferred.fromResult(null);
+    } catch (Exception e) {
+      return Deferred.fromError(e);
+    } finally {
+      result_scanner = null;
+      try {
+        if (hbase_client_table != null) {
+          hbase_client_table.close();
+        } else {
+          LOG.warn("Cannot close " + this + " properly, no table open");
         }
-        scanner_id = 0xDEAD000CC000DEADL;   // Make debugging easier.
-        return arg;
+      } catch (Exception e) {
+        LOG.error("Failed to close client table on scanner " + this, e);
       }
-      public String toString() {
-        return "scanner closed";
-      }
-    };
+    }
   }
   
   public String toString() {
@@ -902,7 +812,7 @@ public final class Scanner {
    * scanner will have to re-locate the RegionServer and re-open itself.
    */
   void invalidate() {
-      this.client.closeScanner(this);
+    close();
   }
   
   /**
@@ -915,4 +825,72 @@ public final class Scanner {
     }
   }
   
+  /** get the scanner settings  */
+  Scan getScannerSettings() {
+    final Scan scan = new Scan(start_key, stop_key);
+    if (families != null) {
+      for (int i = 0; i < families.length; i++) {
+        if (qualifiers != null && qualifiers[i] != null) {
+          for (byte[] qualifier : qualifiers[i]) {
+            scan.addColumn(families[i], qualifier);
+          }
+        } else {
+          scan.addFamily(families[i]);
+        }
+      }
+    }
+    if (filter != null) {
+      LOG.debug("Setting filter: " + filter.getFilter());
+      scan.setFilter(filter.getFilter());
+    }
+    if (min_timestamp != 0 || max_timestamp != Long.MAX_VALUE) {
+      try {
+        scan.setTimeRange(min_timestamp, max_timestamp);
+      } catch (IOException e) {
+        throw new IllegalArgumentException("Invalid time range", e);
+      }
+    }
+    if (versions != 1) {
+      scan.setMaxVersions(versions);
+    }
+    if (!populate_blockcache) {
+      scan.setCacheBlocks(false);
+    }
+    if (max_num_kvs > 0) {
+      scan.setBatch(max_num_kvs);
+    }
+    scan.setMaxResultSize(max_num_bytes);
+    return scan;
+  }
+  @Override
+  public void run() {
+    if (hbase_scan == null) {
+      hbase_scan = getScannerSettings();
+      try {
+        result_scanner = hbase_client_table.getScanner(hbase_scan);
+        iterator = result_scanner.iterator();
+      } catch (IOException e) {
+        throw new NonRecoverableException("Couldn't open scanner " + this, e);
+      }
+    }
+    
+    if (!iterator.hasNext()) {
+      deferred.callback(null);
+      return;
+    }
+    
+    // dunno how to size this since we don't have the low level deets
+    final ArrayList<ArrayList<KeyValue>> rows =
+        new ArrayList<ArrayList<KeyValue>>();
+    
+    // assume these come out per row
+    int kv_count = 0;
+    while (kv_count < max_num_kvs && rows.size() < max_num_rows && iterator.hasNext()) {
+      final Result result = iterator.next();
+      final ArrayList<KeyValue> row = GetRequest.convertResult(result);
+      rows.add(row);
+      kv_count += row.size();
+    }
+    deferred.callback(rows);
+  }
 }
