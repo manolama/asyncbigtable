@@ -1324,6 +1324,7 @@ public final class HBaseClient {
                   @Override
                   public void onException(RetriesExhaustedWithDetailsException e,
                                           BufferedMutator mutator) {
+                      LOG.error("Buffered mutation failed: ", e);
                       for (int i = 0; i < e.getNumExceptions(); i++) {
                         // TODO - these need to be tied to their put requests and
                         // return the exception
